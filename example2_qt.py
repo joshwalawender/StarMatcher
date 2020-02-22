@@ -8,6 +8,7 @@
 
 import sys
 from pathlib import Path
+import numpy as np
 
 from ginga.qtw.QtHelp import QtGui, QtCore
 from ginga import colors
@@ -18,6 +19,14 @@ from ginga.util.loader import load_data
 from ginga.AstroImage import AstroImage
 from ginga.util import wcsmod
 wcsmod.use('astropy/WCSLIB')
+
+from astropy import units as u
+from astropy import coordinates as c
+from astropy.time import Time
+from astropy.table import Table, Column
+
+from astroquery.vizier import Vizier
+Vizier.ROW_LIMIT=100000
 
 from keckdata import fits_reader
 
@@ -184,6 +193,21 @@ class FitsViewer(QtGui.QMainWindow):
     def clear_canvas(self):
         self.canvas.delete_all_objects()
 
+
+    def get_gaia(self):
+        print(f"Querying Vizier for Gaia catalog")
+        gaia = Vizier.query_region(self.catalog_coordinate,
+                                   radius=self.catalog_radius*u.deg,
+                                   catalog='I/345/gaia2')[0]
+        print(f"Got {len(gaia)} stars")
+        filtered = gaia
+        print(f"Filtered down to {len(filtered)} stars")
+
+        print(filtered['RA_ICRS', 'DE_ICRS', 'pmRA', 'pmDE', 'Gmag', 'BPmag', 'RPmag'])
+        print(filtered.keys())
+        self.catalog = filtered
+
+
     def load_file(self, filepath):
         p = Path(filepath.strip('file:'))
         print(f"Loading file: {p}")
@@ -192,8 +216,21 @@ class FitsViewer(QtGui.QMainWindow):
         image.wcs.load_header( kd.headers[0] )
 #         image = load_data(filepath, logger=self.logger)
 
+        w = image.wcs.wcs
+        fp = w.calc_footprint()
+        self.catalog_coordinate = c.SkyCoord(np.mean(fp[:,0])*u.deg,
+                                             np.mean(fp[:,1])*u.deg)
+        self.catalog_radius = 0.1
+        for radec in fp:
+            corner = c.SkyCoord(radec[0]*u.deg, radec[1]*u.deg)
+            sep = self.catalog_coordinate.separation(corner)
+            if sep.deg > self.catalog_radius:
+                self.catalog_radius = sep.deg
+
         self.fitsimage.set_image(image)
         self.setWindowTitle(filepath)
+        self.get_gaia()
+
 
     def open_file(self):
         res = QtGui.QFileDialog.getOpenFileName(self, "Open FITS file",
